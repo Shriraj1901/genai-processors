@@ -183,6 +183,13 @@ def _to_openrouter_message(
   raise ValueError(f'Unsupported Part type: {part.mimetype}')
 
 
+def _error_message(error: Any) -> str:
+  """Returns a readable message for an `error` field of a streamed event."""
+  if isinstance(error, dict):
+    return str(error.get('message') or error)
+  return str(error)
+
+
 def _parse_sse_line(line: str) -> dict[str, Any] | None:
   """Parse a Server-Sent Events line."""
   line = line.strip()
@@ -371,8 +378,19 @@ class OpenRouterModel(processor.Processor):
         if parsed.get('type') == 'done':
           break
 
-        # Extract content from the response.
+        # A failure after the stream started arrives as a regular event: the
+        # HTTP status is already 200. The error is either at the top level or on
+        # the first choice.
         choices = parsed.get('choices', [])
+        error = parsed.get('error') or (
+            choices[0].get('error') if choices else None
+        )
+        if error:
+          raise RuntimeError(
+              f'OpenRouter stream error: {_error_message(error)}'
+          )
+
+        # Extract content from the response.
         if not choices:
           continue
 

@@ -403,6 +403,57 @@ class OpenRouterModelTest(parameterized.TestCase):
 
       self.assertIn('Invalid API key', str(context.exception))
 
+  @parameterized.named_parameters(
+      dict(
+          testcase_name='after_content',
+          stream=(
+              'data: {"choices":[{"delta":{"content":"The answer starts"},'
+              '"finish_reason":null}]}\n\n'
+              'data: {"error":{"code":"server_error","message":"Provider'
+              ' disconnected unexpectedly"},"choices":[{"index":0,'
+              '"delta":{"content":""},"finish_reason":"error"}]}\n\n'
+              'data: [DONE]\n\n'
+          ),
+          expected_message='Provider disconnected unexpectedly',
+      ),
+      dict(
+          testcase_name='only_event',
+          stream=(
+              'data: {"error":{"code":429,"message":"Rate limited"}}\n\n'
+              'data: [DONE]\n\n'
+          ),
+          expected_message='Rate limited',
+      ),
+      dict(
+          testcase_name='error_on_choice',
+          stream=(
+              'data: {"choices":[{"delta":{"content":"Hi"},'
+              '"finish_reason":null,"error":{"code":429,'
+              '"message":"Quota exceeded"}}]}\n\n'
+              'data: [DONE]\n\n'
+          ),
+          expected_message='Quota exceeded',
+      ),
+  )
+  def test_mid_stream_error_is_raised(self, stream, expected_message):
+    def request_handler(request: httpx.Request):
+      del request  # Unused.
+      return httpx.Response(http.HTTPStatus.OK, text=stream)
+
+    mock_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(request_handler),
+        base_url='https://openrouter.ai/api/v1',
+    )
+
+    with mock.patch.object(httpx, 'AsyncClient', return_value=mock_client):
+      model = openrouter_model.OpenRouterModel(
+          api_key='test-key',
+          model_name='test-model',
+      )
+
+      with self.assertRaisesRegex(RuntimeError, expected_message):
+        processor.apply_sync(model, ['test'])
+
 
 if __name__ == '__main__':
   unittest.main()
